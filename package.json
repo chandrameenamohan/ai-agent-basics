@@ -1,0 +1,34 @@
+{
+  "name": "ai-agent-basics",
+  "version": "1.0.0",
+  "description": "AI Agent Engineering from First Principles",
+  "type": "module",
+  "scripts": {
+    "verify": "bun module-0-setup/solutions/verify.ts",
+    "m1:raw": "bun module-1-llm-apis/solutions/01-raw-http.ts",
+    "m1:sdk": "bun module-1-llm-apis/solutions/02-sdk-basic.ts",
+    "m1:stream": "bun module-1-llm-apis/solutions/03-streaming.ts",
+    "m1:structured": "bun module-1-llm-apis/solutions/04-structured-output.ts",
+    "m2:minimal": "bun module-2-agent-loop/solutions/01-loop-minimal.ts",
+    "m2:history": "bun module-2-agent-loop/solutions/02-loop-with-history.ts",
+    "m3:calculator": "bun module-3-tools/solutions/03-calculator-agent.ts",
+    "m4:agent": "bun module-4-filesystem/solutions/file-agent.ts",
+    "m5:agent": "bun module-5-coding-agent/solutions/main.ts",
+    "m6:agent": "bun module-6-context/solutions/context-agent.ts",
+    "m7:eval": "bun module-7-evals/solutions/run-evals.ts",
+    "m8:harness": "bun module-8-harness/solutions/main.ts",
+    "m9:improve": "bun module-9-self-improve/solutions/bootstrap.ts",
+    "m10:pipeline": "bun module-10-fine-tuning/solutions/train.ts",
+    "m11:rl": "bun module-11-rl-agents/solutions/rl-training.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "dotenv": "^16.4.7",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "tsx": "^4.19.0",
+    "@types/node": "^22.0.0"
+  }
+}
