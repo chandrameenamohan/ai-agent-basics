@@ -69,6 +69,24 @@ export function createEditFileTool(sandbox: Sandbox): Tool {
 }
 ```
 
+**Python:**
+```python
+import os
+from sandbox import Sandbox
+
+def create_edit_file_tool(sandbox: Sandbox) -> dict:
+    def execute(inp):
+        file_path = sandbox.resolve(str(inp["path"]))
+        old_str, new_str = str(inp["old_string"]), str(inp["new_string"])
+
+        # TODO: If old_str is empty, create new file with new_str
+        # TODO: Otherwise, read file, count occurrences
+        #   - 0: return "old_string not found" error
+        #   - >1: return error with count
+        #   - 1: replace and write back
+    return {"name": "edit-file", "description": "...", "input_schema": {...}, "execute": execute}
+```
+
 ### Step 2: Write the system prompt
 
 Create `module-5-coding-agent/prompt.ts`:
@@ -137,6 +155,22 @@ async function main() {
 }
 
 main().catch(console.error);
+```
+
+**Python:**
+```python
+from sandbox import Sandbox
+from tools import create_file_tools
+from edit_file import create_edit_file_tool
+from tool_registry import ToolRegistry, Tool
+from prompt import CODING_AGENT_PROMPT
+
+def coding_agent(task: str, workspace_path: str) -> str:
+    sandbox = Sandbox(os.path.realpath(workspace_path))
+    registry = ToolRegistry()
+    # TODO: Register file tools AND edit-file tool
+    # TODO: Standard agent loop with CODING_AGENT_PROMPT + workspace
+    # TODO: maxTurns: 30
 ```
 
 Run it: `bun module-5-coding-agent/main.ts "List the files and describe what this project does"`

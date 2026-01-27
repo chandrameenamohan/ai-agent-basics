@@ -43,6 +43,19 @@ import Anthropic from "@anthropic-ai/sdk";
 // (Hint: the constructor takes no arguments — it reads the API key from process.env)
 ```
 
+**Python:**
+```python
+from dotenv import load_dotenv
+import anthropic
+
+load_dotenv()
+client = anthropic.Anthropic()
+
+# TODO: Call client.messages.create() with model, max_tokens, messages
+# TODO: Extract text from response.content[0] (check .type == "text")
+# TODO: Print response text, response.model, and response.usage
+```
+
 Now write a `main()` function that:
 1. Calls `client.messages.create()` with three required fields:
    - `model`: `"claude-sonnet-4-20250514"` (which model to use)
@@ -60,10 +73,26 @@ async function main() {
 main().catch(console.error);
 ```
 
+**Python:**
+```python
+def main():
+    # TODO: Make the API call
+    # TODO: Print the response, model, and usage
+    pass
+
+if __name__ == "__main__":
+    main()
+```
+
 ### Step 3: Run it
 
 ```bash
 bun module-0-setup/verify.ts
+```
+
+Or for Python:
+```bash
+python module-0-setup/verify.py
 ```
 
 You should see Claude's response and token usage stats. If you get an authentication error, check your `.env` file.

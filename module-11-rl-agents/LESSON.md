@@ -76,6 +76,21 @@ export class AgentEnvironment {
 }
 ```
 
+**Python:**
+```python
+import tempfile, shutil
+from sandbox import Sandbox
+from tools import create_file_tools
+from tool_registry import ToolRegistry, Tool
+
+class AgentEnvironment:
+    def __init__(self):
+        self.state = None
+    # TODO: reset(setup) — tempfile.mkdtemp(), write files, build registry
+    # TODO: step(tool_name, inp) — increment step, execute, check max_steps
+    # TODO: cleanup() — shutil.rmtree()
+```
+
 ### Step 2: Build the reward function
 
 Create `module-11-rl-agents/rewards.ts`:
@@ -105,6 +120,16 @@ export interface RewardConfig {
 //   total = outcome + efficiency + toolUse
 ```
 
+**Python:**
+```python
+def compute_reward(grade_result, steps, config=None):
+    # outcome = score * outcome_weight
+    # efficiency = len(steps) * step_penalty
+    # tool_use = valid * bonus + invalid * penalty
+    # total = outcome + efficiency + tool_use
+    pass
+```
+
 ### Step 3: Build trajectory collection
 
 Create `module-11-rl-agents/trajectories.ts`:
@@ -119,6 +144,17 @@ Create `module-11-rl-agents/trajectories.ts`:
 //   6. Return { episodeId, prompt, steps, transcript, reward, success }
 ```
 
+**Python:**
+```python
+# TODO: collect_trajectory(env, setup, grader, reward_config=None):
+#   1. env.reset(setup)
+#   2. Run agent loop, recording steps
+#   3. grade = grader.grade(workspace_dir, transcript)
+#   4. reward = compute_reward(grade, steps)
+#   5. env.cleanup()
+#   6. Return dict with episode_id, prompt, steps, transcript, reward, success
+```
+
 ### Step 4: Build curriculum learning
 
 Create `module-11-rl-agents/curriculum.ts`:
@@ -131,6 +167,16 @@ export class Curriculum {
 }
 ```
 
+**Python:**
+```python
+class Curriculum:
+    def __init__(self, tiers):
+        # TODO: Initialize state with current_tier, tier_pass_rates, etc.
+    # TODO: record_outcome(success) — update EMA, check promotion (threshold 0.8)
+    # TODO: sample_task() — random.choice from current tier
+    # TODO: is_complete() — highest tier at threshold
+```
+
 ### Step 5: Build RLVR
 
 Create `module-11-rl-agents/rlvr.ts`:
@@ -138,6 +184,12 @@ Create `module-11-rl-agents/rlvr.ts`:
 ```typescript
 // TODO: graderAsReward(grader, config?) — convert Module 7 grader to RL reward function
 // TODO: compositeRLVR(graders[]) — combine multiple graders with weights
+```
+
+**Python:**
+```python
+# TODO: grader_as_reward(grader, config=None) — wrap grader.grade() with compute_reward()
+# TODO: composite_rlvr(graders) — combine multiple graders with weights
 ```
 
 ### Step 6: Build the training loop

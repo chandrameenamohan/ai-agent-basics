@@ -7,7 +7,9 @@ This is a hands-on course. Each module has:
 ```
 module-N-topic/
 ├── LESSON.md          # Read this — it's the lesson
-└── solutions/         # Reference code (check AFTER doing exercises)
+└── solutions/
+    ├── *.ts           # TypeScript reference code
+    └── python/        # Python reference code
 ```
 
 **The workflow:**
@@ -20,6 +22,8 @@ module-N-topic/
 
 The `bun run` scripts point to `solutions/` so they work as demos. To run your own code: `bun module-N/my-file.ts`
 
+Python solutions are also available. Install dependencies with `pip install -r requirements.txt`, then run: `python module-N-topic/solutions/python/file.py`
+
 ## Structure
 - Modules 0-5: Build fundamentals (API → loop → tools → coding agent)
 - Modules 6-8: Scale (context engineering, evals, harness)
@@ -29,10 +33,13 @@ The `bun run` scripts point to `solutions/` so they work as demos. To run your o
 ## Commands
 - `bun run verify` — run the solution demo for Module 0
 - `bun run m1:raw` through `bun run m11:rl` — run solution demos for each module
-- `bun module-N/my-file.ts` — run your own code directly
+- `bun module-N/my-file.ts` — run your own TypeScript code directly
+- `pip install -r requirements.txt` — install Python dependencies
+- `python module-N-topic/solutions/python/file.py` — run Python solutions
 
 ## Conventions
-- All modules use `dotenv/config` for API key loading
+- TypeScript modules use `dotenv/config`; Python modules use `python-dotenv` for API key loading
+- Python uses `pydantic` for structured output (replaces Zod)
 - Tools always return strings (errors too, never throw into the loop)
 - Agent loop pattern: send → check stop_reason → execute tools → loop
 - Path validation: all file tools validate paths against allowed root

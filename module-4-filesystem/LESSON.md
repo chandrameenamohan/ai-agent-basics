@@ -42,6 +42,22 @@ export class Sandbox {
 }
 ```
 
+**Python:**
+```python
+import os
+
+class Sandbox:
+    def __init__(self, root: str):
+        self.root = os.path.realpath(root)
+
+    def resolve(self, file_path: str) -> str:
+        # TODO: Use os.path.realpath(os.path.join(self.root, file_path))
+        # TODO: Check resolved.startswith(self.root)
+        # TODO: If not, raise ValueError
+        # TODO: Return the resolved path
+        pass
+```
+
 This is the most important code in the module. Test it mentally: what does `sandbox.resolve("../../etc/passwd")` do?
 
 ### Step 2: Build the file tools
@@ -79,6 +95,21 @@ export function createFileTools(sandbox: Sandbox): Tool[] {
 }
 ```
 
+**Python:**
+```python
+import os, subprocess
+from sandbox import Sandbox
+
+def create_file_tools(sandbox: Sandbox) -> list[dict]:
+    # TODO: Build 5 tools, each using sandbox.resolve() on all paths:
+    # 1. read-file: open().read()
+    # 2. write-file: os.makedirs + open().write()
+    # 3. list-dir: os.listdir(), label [dir] or [file]
+    # 4. search-grep: subprocess.run(["grep", "-rn", ...])
+    # 5. run-shell: subprocess.run(cmd, shell=True, cwd=sandbox.root)
+    return [...]
+```
+
 ### Step 3: Wire up the file agent
 
 Create `module-4-filesystem/file-agent.ts`:
@@ -109,6 +140,20 @@ async function fileAgent(task: string, workspacePath: string): Promise<string> {
 }
 
 // TODO: main() reads task and workspace from process.argv
+```
+
+**Python:**
+```python
+from sandbox import Sandbox
+from tools import create_file_tools
+from tool_registry import ToolRegistry, Tool
+
+def file_agent(task: str, workspace_path: str) -> str:
+    sandbox = Sandbox(os.path.realpath(workspace_path))
+    registry = ToolRegistry()
+    for t in create_file_tools(sandbox):
+        registry.register(Tool(**t))
+    # TODO: Standard agent loop with registry.get_definitions() and registry.execute()
 ```
 
 Run it: `bun module-4-filesystem/file-agent.ts "List the files in this workspace and summarize what you find."`

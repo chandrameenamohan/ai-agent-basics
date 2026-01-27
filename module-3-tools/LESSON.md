@@ -66,6 +66,20 @@ export class ToolRegistry {
 }
 ```
 
+**Python:**
+```python
+class ToolRegistry:
+    def __init__(self):
+        self._tools: dict[str, Tool] = {}
+
+    # TODO: register(tool) — add to dict by name
+    # TODO: get_definitions() — return list of dicts (name, description, input_schema only)
+    # TODO: execute(name, inp) — find tool, run it, catch exceptions
+    #   - If not found: return "Error: unknown tool "name""
+    #   - If throws: return "Error: <message>"
+    # TODO: has(name), list()
+```
+
 The key method is `execute`. It **must** have a try/catch that converts any thrown error into a string. This is the firewall between tools and the agent loop.
 
 ### Step 2: Build the calculator agent
@@ -125,6 +139,17 @@ async function main() {
 }
 
 main().catch(console.error);
+```
+
+**Python:**
+```python
+from tool_registry import ToolRegistry, Tool
+
+# TODO: Define add_tool, multiply_tool, factorial_tool
+# TODO: Build calculator_agent(question) using ToolRegistry
+#   - registry.register(tool) for each tool
+#   - registry.get_definitions() for API call
+#   - registry.execute(name, input) for tool execution
 ```
 
 Run it: `bun module-3-tools/03-calculator-agent.ts`

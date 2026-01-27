@@ -49,6 +49,18 @@ const SESSIONS_DIR = path.join(process.cwd(), "sessions");
 // TODO: createSession(task, workspace) — return new Session with timestamp-based id
 ```
 
+**Python:**
+```python
+import os, json, time
+
+SESSIONS_DIR = os.path.join(os.getcwd(), "sessions")
+
+# TODO: save_session(session) — json.dump to sessions/{id}.json
+# TODO: load_session(id) — json.load, return None if not found
+# TODO: list_sessions() — os.listdir, parse each, sort by updatedAt
+# TODO: create_session(task, workspace) — return dict with timestamp id
+```
+
 ### Step 2: Build progress tracking
 
 Create `module-8-harness/progress.ts`:
@@ -70,6 +82,16 @@ export function createProgressTools(): { tools: Tool[]; state: ProgressState } {
 
   return { tools: [addItem, completeItem, showProgress], state };
 }
+```
+
+**Python:**
+```python
+def create_progress_tools() -> tuple[list[dict], dict]:
+    state = {"items": []}
+    # TODO: progress-add — append {"text": ..., "done": False}
+    # TODO: progress-complete — set items[index]["done"] = True
+    # TODO: progress-show — format as "Progress: 2/4\n0. [x] ..."
+    return tools, state
 ```
 
 ### Step 3: Build the harness
@@ -96,6 +118,16 @@ export async function runHarness(
 }
 ```
 
+**Python:**
+```python
+# TODO: _load_claude_md(workspace) — try open("CLAUDE.md"), return "" if not found
+# TODO: run_harness(task, workspace_path, session_id=None):
+#   - Load/create session
+#   - Build registry with ALL tools
+#   - Build system_prompt with CLAUDE.md
+#   - Agent loop with compact_history + save_session after EVERY turn
+```
+
 Key insight: save the session in **two places** in the loop — after the assistant response and after tool execution. This minimizes data loss on crash.
 
 ### Step 4: Build the MCP server
@@ -112,6 +144,19 @@ import * as readline from "readline";
 //   "tools/list" → return tool definitions
 //   "tools/call" → execute the tool and return result
 // TODO: Read JSON lines from stdin, write responses to stdout
+```
+
+**Python:**
+```python
+import sys, json
+
+# TODO: Read JSON lines from stdin
+# TODO: Handle "initialize", "tools/list", "tools/call"
+# TODO: Write JSON responses to stdout
+for line in sys.stdin:
+    req = json.loads(line.strip())
+    res = handle_request(req)
+    print(json.dumps(res), flush=True)
 ```
 
 ### Step 5: Build the CLI

@@ -53,6 +53,28 @@ async function main() {
 main().catch(console.error);
 ```
 
+**Python:**
+```python
+import os, json, urllib.request
+from dotenv import load_dotenv
+
+load_dotenv()
+API_KEY = os.environ["ANTHROPIC_API_KEY"]
+API_URL = "https://api.anthropic.com/v1/messages"
+
+def main():
+    body = {
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 256,
+        "messages": [
+            # TODO: Add a user message
+        ],
+    }
+    # TODO: Use urllib.request.Request to POST to API_URL
+    # TODO: Set the three required headers
+    # TODO: Parse the JSON response
+```
+
 Run it: `bun module-1-llm-apis/01-raw-http.ts`
 
 Look at the response structure. Notice `content` is an array of blocks, and `usage` shows token counts.
@@ -82,6 +104,24 @@ const messages: Anthropic.MessageParam[] = [];
 //   7. Exits on "quit"
 ```
 
+**Python:**
+```python
+from dotenv import load_dotenv
+import anthropic
+
+load_dotenv()
+client = anthropic.Anthropic()
+messages = []
+
+# TODO: Write a while loop that:
+#   1. Reads user input with input("You: ")
+#   2. Appends {"role": "user", "content": user_input} to messages
+#   3. Calls client.messages.create() with the full messages list
+#   4. Extracts text from response.content[0]
+#   5. Appends {"role": "assistant", "content": text} to messages
+#   6. Exits on "quit"
+```
+
 Run it: `bun module-1-llm-apis/02-sdk-basic.ts`
 
 Watch the token count grow with each turn. That's the entire conversation being re-sent.
@@ -107,6 +147,23 @@ async function main() {
 }
 
 main().catch(console.error);
+```
+
+**Python:**
+```python
+from dotenv import load_dotenv
+import anthropic
+
+load_dotenv()
+client = anthropic.Anthropic()
+
+def main():
+    prompt = sys.argv[1] if len(sys.argv) > 1 else "Write a haiku about programming."
+
+    # TODO: Use client.messages.stream() as a context manager
+    # TODO: Iterate with `for text in stream.text_stream:`
+    # TODO: print(text, end="", flush=True)
+    # TODO: Get final usage with stream.get_final_message()
 ```
 
 Run it: `bun module-1-llm-apis/03-streaming.ts`
@@ -144,6 +201,22 @@ async function main() {
 }
 
 main().catch(console.error);
+```
+
+**Python:**
+```python
+from pydantic import BaseModel, Field
+
+class MovieReview(BaseModel):
+    title: str
+    year: int
+    rating: int = Field(ge=1, le=10)
+    summary: str
+    pros: list[str]
+    cons: list[str]
+
+# TODO: Ask Claude to review a movie, responding with ONLY valid JSON
+# TODO: Parse with json.loads(), then validate with MovieReview(**raw)
 ```
 
 Run it: `bun module-1-llm-apis/04-structured-output.ts "Inception"`

@@ -86,6 +86,22 @@ export async function applyImprovements(
 }
 ```
 
+**Python:**
+```python
+import anthropic
+client = anthropic.Anthropic()
+
+def analyze_and_improve(report, agent_source_dir: str) -> list[dict]:
+    # TODO: Read current system prompt from prompt.py
+    # TODO: Extract failure patterns from report
+    # TODO: Ask Claude to propose specific rule additions
+    # TODO: Parse JSON response, append rules to ## Rules section
+    # TODO: Return list of {"file", "description", "old_content", "new_content"}
+
+def apply_improvements(improvements: list[dict], base_dir: str):
+    # TODO: For each improvement, read file, replace, write back
+```
+
 ### Step 2: Build the bootstrap loop
 
 Create `module-9-self-improve/bootstrap.ts`:
@@ -121,6 +137,27 @@ async function main() {
 }
 
 main().catch(console.error);
+```
+
+**Python:**
+```python
+import subprocess
+
+def run_eval_cycle(trials_per_task):
+    # TODO: Run evals and return report
+
+def git_snapshot(message):
+    # TODO: subprocess.run(["git", "add", "-A"]) then commit
+
+def git_revert(commit_hash):
+    # TODO: subprocess.run(["git", "revert", "--no-commit", hash])
+
+# Main loop:
+# 1. Run evals
+# 2. If 100% pass rate, stop
+# 3. Analyze failures, propose improvements
+# 4. Git snapshot, apply, git snapshot
+# 5. Re-eval: keep if improved, revert if not
 ```
 
 Run it: `bun module-9-self-improve/bootstrap.ts`

@@ -73,6 +73,14 @@ export interface TraceRecord {
 // TODO: saveTraces(traces, outputPath) — write JSONL
 ```
 
+**Python:**
+```python
+# TODO: extract_traces(trials) — convert to list of dicts with id, task, success, turns, tool_calls
+# TODO: cluster_traces(traces) — group by first 3 words of task
+# TODO: stratified_sample(clusters, samples_per_cluster) — mix success/failure
+# TODO: save_traces(traces, output_path) — write JSONL
+```
+
 ### Step 2: Build the SFT dataset builder
 
 Create `module-10-fine-tuning/sft-dataset.ts`:
@@ -85,6 +93,12 @@ export interface SFTExample {
 // TODO: buildSFTDataset(traces, systemPrompt) — filter successes, format as message arrays
 //   Include tool calls as structured content in assistant messages
 // TODO: saveSFTDataset(examples, outputPath) — write JSONL
+```
+
+**Python:**
+```python
+# TODO: build_sft_dataset(traces, system_prompt) — filter successes, format as message dicts
+# TODO: save_sft_dataset(examples, output_path) — write JSONL
 ```
 
 ### Step 3: Build the DPO dataset builder
@@ -103,6 +117,12 @@ export interface DPOExample {
 // TODO: saveDPODataset(pairs, outputPath) — write JSONL
 ```
 
+**Python:**
+```python
+# TODO: build_dpo_dataset(traces) — group by task, pair success with failure
+# TODO: save_dpo_dataset(pairs, output_path) — write JSONL
+```
+
 ### Step 4: Build the intent classifier
 
 Create `module-10-fine-tuning/classifier.ts`:
@@ -111,6 +131,12 @@ Create `module-10-fine-tuning/classifier.ts`:
 // TODO: classify(text, categories, context?) — ask Claude for category number
 //   max_tokens: 16 for single-token response
 // TODO: routeIntent(task) — classify into code_edit/code_create/code_debug/code_refactor/question
+```
+
+**Python:**
+```python
+# TODO: classify(text, categories, context="") — ask Claude for category number, max_tokens=16
+# TODO: route_intent(task) — classify into code_edit/code_create/code_debug/code_refactor/question
 ```
 
 ### Step 5: Build the orchestrator

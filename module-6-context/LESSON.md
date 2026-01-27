@@ -73,6 +73,25 @@ export async function compactHistory(
 export { estimateTokens };
 ```
 
+**Python:**
+```python
+import json
+import anthropic
+
+client = anthropic.Anthropic()
+
+def estimate_tokens(messages: list) -> int:
+    return len(json.dumps(messages, default=str)) // 4
+
+def compact_history(messages: list, token_limit: int = 80000) -> list:
+    estimated = estimate_tokens(messages)
+    if estimated < token_limit:
+        return messages
+    # TODO: Keep messages[0] (original task) and messages[-6:] (recent)
+    # TODO: Summarize middle messages with Claude
+    # TODO: Return [first, summary_message, *recent]
+```
+
 ### Step 2: Build scratchpad tools
 
 Create `module-6-context/scratchpad.ts`:
@@ -93,6 +112,19 @@ export function createScratchpadTools(workspaceRoot: string): Tool[] {
 
   return [write, read, list];
 }
+```
+
+**Python:**
+```python
+import os
+
+def create_scratchpad_tools(workspace_root: str) -> list[dict]:
+    scratch_dir = os.path.join(workspace_root, ".scratchpad")
+    # TODO: Build 3 tools:
+    # 1. scratchpad-write: os.makedirs + open().write()
+    # 2. scratchpad-read: open().read() with FileNotFoundError handling
+    # 3. scratchpad-list: os.listdir() filtering .md files
+    return [write, read, list_notes]
 ```
 
 ### Step 3: Build the delegation tool
@@ -129,6 +161,22 @@ export function createDelegateTaskTool(
 }
 ```
 
+**Python:**
+```python
+import anthropic
+from tool_registry import ToolRegistry
+
+client = anthropic.Anthropic()
+
+def create_delegate_task_tool(registry: ToolRegistry, system_prompt: str) -> dict:
+    def execute(inp):
+        # TODO: Run a fresh agent loop (same tools, same system prompt)
+        #   - max_turns: 15
+        #   - Return only the final text response
+        pass
+    return {"name": "delegate-task", "description": "...", "input_schema": {...}, "execute": execute}
+```
+
 ### Step 4: Assemble the context-aware agent
 
 Create `module-6-context/context-agent.ts`:
@@ -140,6 +188,14 @@ Wire the Module 5 coding agent with all three context strategies:
 // TODO: In the agent loop, call compactHistory(messages, tokenLimit) before each turn
 // TODO: maxTurns: 40 (context management lets the agent work longer)
 // TODO: Print estimated token count each turn
+```
+
+**Python:**
+```python
+# TODO: Register file tools + edit tool + scratchpad tools + delegate tool
+# TODO: In the agent loop, call compact_history(messages, token_limit) before each turn
+# TODO: max_turns: 40
+# TODO: Print estimated token count each turn
 ```
 
 Run it: `bun module-6-context/context-agent.ts "Refactor this project to use a src/ directory structure"`

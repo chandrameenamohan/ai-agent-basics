@@ -101,6 +101,27 @@ export type ToolUseBlock = Anthropic.ToolUseBlock;
 export type ToolResultBlockParam = Anthropic.ToolResultBlockParam;
 ```
 
+**Python:**
+```python
+from dataclasses import dataclass, field
+from typing import Any, Callable
+
+@dataclass
+class Tool:
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+    execute: Callable[[dict[str, Any]], str]
+
+@dataclass
+class AgentConfig:
+    model: str
+    max_tokens: int
+    max_turns: int
+    system_prompt: str = ""
+    tools: list[Tool] = field(default_factory=list)
+```
+
 ### Step 2: Build the minimal agent loop
 
 Create `module-2-agent-loop/01-loop-minimal.ts`:
@@ -162,6 +183,39 @@ async function main() {
 main().catch(console.error);
 ```
 
+**Python:**
+```python
+from dotenv import load_dotenv
+import anthropic
+from agent_types import Tool
+
+load_dotenv()
+client = anthropic.Anthropic()
+
+echo_tool = Tool(
+    name="echo",
+    description="Echoes back the input message",
+    input_schema={
+        "type": "object",
+        "properties": {"message": {"type": "string", "description": "Message to echo"}},
+        "required": ["message"],
+    },
+    execute=lambda inp: f"Echo: {inp['message']}",
+)
+
+def agent_loop(user_message: str, tools: list[Tool]) -> str:
+    messages = [{"role": "user", "content": user_message}]
+    tool_defs = [{"name": t.name, "description": t.description, "input_schema": t.input_schema} for t in tools]
+
+    while True:
+        # TODO: Step 1 — Call client.messages.create()
+        # TODO: Step 2 — Append assistant response to messages
+        # TODO: Step 3 — Check stop_reason == "end_turn", return text
+        # TODO: Step 4 — For tool_use blocks, find tool, call execute()
+        # TODO: Step 5 — Append tool_results and loop
+        pass
+```
+
 Run it: `bun module-2-agent-loop/01-loop-minimal.ts`
 
 The agent should call the echo tool and report the result.
@@ -188,6 +242,20 @@ async function agentLoop(userMessage: string, config: AgentConfig): Promise<stri
   //   - console.log for each turn showing what happened
   //   - Return "(max turns reached)" if the loop exhausts maxTurns
 }
+```
+
+**Python:**
+```python
+# TODO: Define time_tool — returns datetime.now().isoformat()
+# TODO: Define math_tool — evaluates a math expression safely
+#   (use re.sub to strip non-math chars, eval() to compute)
+
+def agent_loop(user_message: str, config: AgentConfig) -> str:
+    # TODO: Same loop as Step 2, but with:
+    #   - for turn in range(config.max_turns):
+    #   - print() for each turn showing what happened
+    #   - Return "(max turns reached)" if loop exhausts max_turns
+    pass
 ```
 
 Run it: `bun module-2-agent-loop/02-loop-with-history.ts`

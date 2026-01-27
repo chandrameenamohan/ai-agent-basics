@@ -69,6 +69,38 @@ export interface GradeResult {
 // See solutions/ for the complete types
 ```
 
+**Python:**
+```python
+from dataclasses import dataclass, field
+from typing import Any, Callable
+
+@dataclass
+class GradeResult:
+    score: float      # 0.0 to 1.0
+    passed: bool
+    explanation: str
+
+@dataclass
+class TranscriptTurn:
+    role: str
+    content: str
+    tool_calls: list[dict[str, Any]] | None = None
+
+@dataclass
+class Transcript:
+    task: str
+    turns: list[TranscriptTurn]
+    total_tokens: int
+    duration_ms: int
+
+@dataclass
+class Grader:
+    name: str
+    grade: Callable  # (workspace_dir, transcript) -> GradeResult
+
+# TODO: Define EvalTask, Trial, TaskResult, EvalReport dataclasses
+```
+
 ### Step 2: Build deterministic graders
 
 Create `module-7-evals/graders/code-grader.ts`:
@@ -85,6 +117,14 @@ import type { Grader, GradeResult, Transcript } from "../types.js";
 // TODO: compositeGrader(graders[]) — run all, compute average score, pass only if ALL pass
 ```
 
+**Python:**
+```python
+# TODO: string_match_grader(file_path, expected) — open file, check `expected in content`
+# TODO: file_exists_grader(file_path) — os.path.exists()
+# TODO: shell_test_grader(command) — subprocess.run, check returncode
+# TODO: composite_grader(graders) — run all, avg score, pass only if ALL pass
+```
+
 ### Step 3: Build the model grader
 
 Create `module-7-evals/graders/model-grader.ts`:
@@ -92,6 +132,12 @@ Create `module-7-evals/graders/model-grader.ts`:
 ```typescript
 // TODO: rubricGrader(rubric) — ask Claude to score 0-10, normalize to 0-1, pass if >= 0.7
 // TODO: pairwiseGrader(criteria) — ask Claude YES/NO, return 1 or 0
+```
+
+**Python:**
+```python
+# TODO: rubric_grader(rubric) — ask Claude to score 0-10, normalize to 0-1
+# TODO: pairwise_grader(criteria) — ask Claude YES/NO
 ```
 
 ### Step 4: Build the harness
@@ -108,6 +154,17 @@ Create `module-7-evals/harness.ts`:
 //   6. Return the Trial
 ```
 
+**Python:**
+```python
+# For each trial:
+#   1. workspace_dir = tempfile.mkdtemp()
+#   2. task.setup(workspace_dir)
+#   3. transcript = run_agent(task.prompt, workspace_dir)
+#   4. grade = task.grader.grade(workspace_dir, transcript)
+#   5. shutil.rmtree(workspace_dir)
+#   6. Return Trial(...)
+```
+
 ### Step 5: Build metrics
 
 Create `module-7-evals/metrics.ts`:
@@ -116,6 +173,13 @@ Create `module-7-evals/metrics.ts`:
 // pass@k = 1 - (1 - passRate)^k
 // pass^k = passRate^k
 // Also compute avgScore and avgTurns
+```
+
+**Python:**
+```python
+# pass_at_k = 1 - (1 - pass_rate) ** k
+# pass_exp_k = pass_rate ** k
+# Also compute avg_score and avg_turns
 ```
 
 ### Step 6: Build the report printer and runner
