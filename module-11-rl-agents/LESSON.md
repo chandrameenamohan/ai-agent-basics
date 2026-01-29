@@ -1,7 +1,7 @@
 # Module 11: RL Infrastructure + In-Context Learning
 
 ## Goal
-Build the infrastructure for reinforcement learning — environments, rewards, trajectories, curriculum — then make the agent **demonstrably improve** across episodes using Reflexion (in-context RL). Connect trajectories to the fine-tuning pipeline from Module 10.
+Build the infrastructure for reinforcement learning — environments, rewards, trajectories, curriculum — then make the agent **demonstrably improve** across episodes using Reflexion. Connect trajectories to the fine-tuning pipeline from Module 10.
 
 ## Concepts
 
@@ -15,10 +15,11 @@ Build the infrastructure for reinforcement learning — environments, rewards, t
 ```
 
 - **Environment**: A sandboxed workspace with tools. `reset()` creates a fresh episode. `step()` executes one tool call.
-- **Episode**: One attempt at one task, from start to completion.
+- **Episode**: One attempt at one task, from start to completion. An episode ends when: the agent produces a final text response (no tool calls), or `maxSteps` is reached.
 - **Trajectory**: The full recording of an episode: every step, the grade, and the reward.
 - **Reward**: A number that tells the training algorithm how good the episode was.
 - **Policy**: The agent's behavior (the LLM + system prompt). RL changes this to maximize reward.
+- **Tool validity**: A tool call is *valid* if the tool exists in the registry, the input passes schema validation, and execution completes without throwing. Invalid calls return an error string (never throw into the loop — see Module 3 convention).
 
 ### Why episodic rewards, not per-step
 If you reward each tool call individually, the agent learns to game individual steps (e.g., calling read-file repeatedly for the per-call reward). Episodic rewards — computed at the **end** of the episode based on the final outcome — prevent this. The outcome signal dominates; step-level signals are minor shaping.
@@ -40,7 +41,7 @@ total    = 1.0 - 0.2 + 0.1 = 0.900
 ```
 Strong positive reward. The agent succeeded efficiently.
 
-**Example 2: A failed 50-step episode (5 invalid tool calls)**
+**Example 2: A failed 50-step episode (5 invalid tool calls out of 50 total)**
 ```
 outcome  = 0.0 × 1.0       =  0.000
 efficiency = 50 × -0.02    = -1.000
@@ -51,17 +52,17 @@ Negative reward. The agent wasted steps and still failed.
 
 Notice: the outcome component alone separates success from failure. Efficiency and tool quality only matter at the margins.
 
-### Reflexion — in-context RL
-Traditional RL updates model weights. That requires infrastructure (TRL, OpenRLHF) and GPU time. But there's a simpler form of learning that works today: **Reflexion**.
+### Reflexion — episodic self-critique
+Traditional RL updates model weights. That requires infrastructure (TRL, OpenRLHF) and GPU time. But there's a simpler form of improvement that works today: **Reflexion**.
 
-The idea: after each episode, summarize what went right or wrong. Inject those summaries into the system prompt for the next episode. The agent's behavior changes — it avoids past mistakes and repeats successful strategies — without any weight updates.
+The idea: after each episode, use the LLM to analyze what went right or wrong and produce a short summary. Inject those summaries into the system prompt for the next episode. The agent's behavior changes — it avoids past mistakes and repeats successful strategies — without any weight updates.
 
-This is "in-context RL": the context window is the memory, and prompt engineering is the policy update. It won't generalize beyond the context window, but it demonstrably improves performance within a session.
+Strictly speaking, Reflexion is not reinforcement learning in the formal sense — there's no policy gradient, no credit assignment, no learned value function. It's better described as *episodic self-critique with prompt adaptation*. We use RL-adjacent terminology here because the control loop (episode → evaluation → prompt update) is structurally similar, and this module builds the infrastructure that supports both approaches.
 
 Reflexion gives you something concrete to observe: the agent getting better across episodes. Weight-based RL (Module 10's fine-tuning pipeline) gives you permanent improvement.
 
-### Bridge to Module 10: trajectories are training data
-The trajectories you collect here are exactly the data Module 10 needs:
+### Forward reference: trajectories are training data for Module 10
+The trajectories you collect here are exactly the data Module 10's fine-tuning pipeline needs. You don't need to have completed Module 10 yet — just know where this is heading:
 - **Successful trajectories** (reward > threshold) → SFT training pairs (prompt → tool calls)
 - **Paired trajectories** (same task, different outcomes) → DPO preference pairs (chosen vs rejected)
 
@@ -73,7 +74,54 @@ Start with easy tasks. When the agent consistently passes (≥80% pass rate), pr
 ### RLVR (Rule-based Language Verification Rewards)
 Your Module 7 graders **are** your reward functions. `stringMatchGrader` → deterministic, reproducible reward signal. `compositeGrader` → multi-objective reward. No model judge needed — just code that checks concrete outcomes.
 
+## Shared types
+
+These interfaces are used across multiple steps. Define them first so everything type-checks.
+
+**GradeResult** (from Module 7 — repeated here for reference):
+```typescript
+export interface GradeResult {
+  score: number;    // 0.0 to 1.0
+  passed: boolean;
+  explanation: string;
+}
+```
+
+**Trajectory** (the output of one complete episode):
+```typescript
+export interface Trajectory {
+  episodeId: string;
+  prompt: string;
+  steps: TrajectoryStep[];
+  transcript: Transcript;   // from Module 7
+  reward: EpisodeReward;
+  success: boolean;
+}
+```
+
+**Python equivalents:**
+```python
+from dataclasses import dataclass
+
+@dataclass
+class GradeResult:
+    score: float       # 0.0 to 1.0
+    passed: bool
+    explanation: str
+
+@dataclass
+class Trajectory:
+    episode_id: str
+    prompt: str
+    steps: list[dict]       # list of TrajectoryStep dicts
+    transcript: dict
+    reward: dict            # EpisodeReward dict
+    success: bool
+```
+
 ## Build It
+
+Keep in mind: all of this infrastructure exists so that in Step 7, you can watch the agent *actually get better* without training.
 
 ### Step 1: Build the environment
 
@@ -97,6 +145,11 @@ export interface EnvironmentState {
   done: boolean;
 }
 
+export interface StepResult {
+  result: string;     // tool output (or error message)
+  wasValid: boolean;  // true if tool existed, input validated, and execution didn't throw
+}
+
 export interface EpisodeSetup {
   files: Record<string, string>;  // filename → content
   prompt: string;
@@ -105,26 +158,40 @@ export interface EpisodeSetup {
 export class AgentEnvironment {
   private state: EnvironmentState | null = null;
 
-  // TODO: reset(setup) — create temp dir, write setup files, build tool registry, return state
-  // TODO: step(toolName, input) — increment step, execute tool, check maxSteps, return result
-  // TODO: cleanup() — rm -rf workspace, set state to null
-  // TODO: getState() — return current state
+  // TODO: reset(setup: EpisodeSetup): Promise<EnvironmentState>
+  //   Create temp dir, write setup files, build tool registry, return state
+
+  // TODO: step(toolName: string, input: Record<string, unknown>): Promise<StepResult>
+  //   Increment step counter. Execute tool via registry.
+  //   If step >= maxSteps, set done = true.
+  //   Return { result, wasValid }. Never throw — return error strings.
+
+  // TODO: cleanup(): Promise<void> — rm -rf workspace, set state to null
+
+  // TODO: getState(): EnvironmentState — return current state (throw if not reset)
 }
 ```
 
 **Python:**
 ```python
 import tempfile, shutil
+from dataclasses import dataclass
 from sandbox import Sandbox
 from tools import create_file_tools
 from tool_registry import ToolRegistry, Tool
 
+@dataclass
+class StepResult:
+    result: str
+    was_valid: bool
+
 class AgentEnvironment:
     def __init__(self):
         self.state = None
-    # TODO: reset(setup) — tempfile.mkdtemp(), write files, build registry
-    # TODO: step(tool_name, inp) — increment step, execute, check max_steps
+    # TODO: reset(setup) → EnvironmentState — tempfile.mkdtemp(), write files, build registry
+    # TODO: step(tool_name, inp) → StepResult — increment step, execute, check max_steps
     # TODO: cleanup() — shutil.rmtree()
+    # TODO: get_state() → dict
 ```
 
 ### Step 2: Build the reward function
@@ -138,7 +205,7 @@ export interface TrajectoryStep {
   toolName: string;
   input: Record<string, unknown>;
   result: string;
-  wasValid: boolean;
+  wasValid: boolean;  // Did the tool exist, validate, and execute without throwing?
 }
 
 export interface RewardConfig {
@@ -213,8 +280,8 @@ def compute_reward(grade_result, steps: list[dict], config: RewardConfig = None)
     outcome = grade_result.score * config.outcome_weight
     efficiency = len(steps) * config.step_penalty
 
-    valid_calls = sum(1 for s in steps if s.get("was_valid", True))
-    invalid_calls = sum(1 for s in steps if not s.get("was_valid", True))
+    valid_calls = sum(1 for s in steps if s["was_valid"])
+    invalid_calls = sum(1 for s in steps if not s["was_valid"])
     tool_use = valid_calls * config.valid_tool_bonus + invalid_calls * config.invalid_tool_penalty
 
     total = outcome + efficiency + tool_use
@@ -230,27 +297,129 @@ def compute_reward(grade_result, steps: list[dict], config: RewardConfig = None)
 
 ### Step 3: Build trajectory collection
 
-Create `module-11-rl-agents/trajectories.ts`:
+Create `module-11-rl-agents/trajectories.ts`.
+
+Here's how the agent loop integrates with the environment. This is the core pattern — the LLM generates tool calls, the environment executes them, and every step is recorded:
 
 ```typescript
-// TODO: collectTrajectory(env, setup, grader, rewardConfig?) → Trajectory
-//   1. env.reset(setup)
-//   2. Run agent loop, recording every step as TrajectoryStep
-//   3. Grade the final workspace
-//   4. Compute reward from grade + steps
-//   5. env.cleanup()
-//   6. Return { episodeId, prompt, steps, transcript, reward, success }
+import Anthropic from "@anthropic-ai/sdk";
+import { AgentEnvironment, type EpisodeSetup, type StepResult } from "./environment.js";
+import { computeReward, type TrajectoryStep, type RewardConfig } from "./rewards.js";
+import type { Grader, Transcript } from "../module-7-evals/types.js";
+
+const client = new Anthropic();
+
+// TODO: collectTrajectory(env, setup, grader, rewardConfig?, systemPromptExtra?) → Trajectory
+//   Full signature — note the optional systemPromptExtra for Reflexion (Step 7):
+
+export async function collectTrajectory(
+  env: AgentEnvironment,
+  setup: EpisodeSetup,
+  grader: Grader,
+  rewardConfig?: RewardConfig,
+  systemPromptExtra?: string         // Reflexion prompt injected here
+): Promise<Trajectory> {
+  const state = await env.reset(setup);
+  const steps: TrajectoryStep[] = [];
+  const messages: Message[] = [{ role: "user", content: setup.prompt }];
+
+  // The agent loop: send → check stop_reason → execute tools → loop
+  for (let turn = 0; turn < state.maxSteps; turn++) {
+    const response = await client.messages.create({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 4096,
+      system: BASE_SYSTEM_PROMPT + (systemPromptExtra ?? ""),
+      tools: state.registry.getDefinitions(),
+      messages,
+    });
+
+    messages.push({ role: "assistant", content: response.content });
+
+    // Episode ends when agent produces a final text response (no tool calls)
+    if (response.stop_reason === "end_turn") break;
+
+    // Execute each tool call and record it
+    const toolResults = [];
+    for (const block of response.content) {
+      if (block.type === "tool_use") {
+        const input = block.input as Record<string, unknown>;
+        const { result, wasValid }: StepResult = await env.step(block.name, input);
+        steps.push({ toolName: block.name, input, result, wasValid });
+        toolResults.push({ type: "tool_result", tool_use_id: block.id, content: result });
+      }
+    }
+    messages.push({ role: "user", content: toolResults });
+  }
+
+  // Grade and compute reward
+  const grade = await grader.grade(state.workspaceDir, transcript);
+  const reward = computeReward(grade, steps, rewardConfig);
+  await env.cleanup();
+
+  return {
+    episodeId: `ep-${Date.now()}`,
+    prompt: setup.prompt,
+    steps,
+    transcript,
+    reward,
+    success: grade.passed,
+  };
+}
 ```
 
 **Python:**
 ```python
-# TODO: collect_trajectory(env, setup, grader, reward_config=None):
-#   1. env.reset(setup)
-#   2. Run agent loop, recording steps
-#   3. grade = grader.grade(workspace_dir, transcript)
-#   4. reward = compute_reward(grade, steps)
-#   5. env.cleanup()
-#   6. Return dict with episode_id, prompt, steps, transcript, reward, success
+import anthropic
+
+client = anthropic.Anthropic()
+
+def collect_trajectory(env, setup, grader, reward_config=None, system_prompt_extra=""):
+    state = env.reset(setup)
+    steps = []
+    messages = [{"role": "user", "content": setup["prompt"]}]
+
+    for turn in range(state["max_steps"]):
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=4096,
+            system=BASE_SYSTEM_PROMPT + system_prompt_extra,
+            tools=state["registry"].get_definitions(),
+            messages=messages,
+        )
+        messages.append({"role": "assistant", "content": response.content})
+
+        if response.stop_reason == "end_turn":
+            break
+
+        tool_results = []
+        for block in response.content:
+            if block.type == "tool_use":
+                result = env.step(block.name, block.input)
+                steps.append({
+                    "tool_name": block.name,
+                    "input": block.input,
+                    "result": result.result,
+                    "was_valid": result.was_valid,
+                })
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": result.result,
+                })
+        messages.append({"role": "user", "content": tool_results})
+
+    grade = grader.grade(state["workspace_dir"], transcript)
+    reward = compute_reward(grade, steps, reward_config)
+    env.cleanup()
+
+    return Trajectory(
+        episode_id=f"ep-{int(time.time())}",
+        prompt=setup["prompt"],
+        steps=steps,
+        transcript=transcript,
+        reward=reward,
+        success=grade.passed,
+    )
 ```
 
 ### Step 4: Build curriculum learning
@@ -258,11 +427,72 @@ Create `module-11-rl-agents/trajectories.ts`:
 Create `module-11-rl-agents/curriculum.ts`:
 
 ```typescript
+import type { EvalTask } from "../module-7-evals/types.js";
+
+export interface CurriculumTier {
+  name: string;
+  difficulty: string;
+  tasks: EvalTask[];
+  promotionThreshold: number;  // e.g. 0.8
+}
+
 export class Curriculum {
   // TODO: recordOutcome(success) — update EMA pass rate, check promotion threshold (0.8)
   // TODO: sampleTask() — random task from current tier
+  // TODO: getCurrentTier() — return current CurriculumTier
   // TODO: isComplete() — highest tier at promotion threshold
 }
+```
+
+Here are concrete task definitions for each tier:
+
+```typescript
+import { stringMatchGrader, fileExistsGrader, compositeGrader } from "../module-7-evals/graders.js";
+
+const easyTasks: EvalTask[] = [
+  {
+    id: "easy-create-file",
+    description: "Create a simple file",
+    prompt: "Create a file called hello.txt containing 'Hello, World!'",
+    grader: compositeGrader([
+      fileExistsGrader("hello.txt"),
+      stringMatchGrader("hello.txt", "Hello, World!"),
+    ]),
+  },
+  {
+    id: "easy-edit-line",
+    description: "Change one line in a file",
+    prompt: "In greeting.ts, change the greeting from 'Hi' to 'Hello'.",
+    grader: stringMatchGrader("greeting.ts", '"Hello"'),
+  },
+];
+
+const mediumTasks: EvalTask[] = [
+  {
+    id: "medium-add-function",
+    description: "Add a function to existing code",
+    prompt: "Add an 'isEven' function to math.ts that returns true if a number is even.",
+    grader: compositeGrader([
+      stringMatchGrader("math.ts", "isEven"),
+      stringMatchGrader("math.ts", "% 2"),
+    ]),
+  },
+];
+
+const hardTasks: EvalTask[] = [
+  {
+    id: "hard-fix-bug",
+    description: "Fix a bug in sorting code",
+    prompt: "Fix the bug in sort.ts where the comparison is reversed (descending instead of ascending).",
+    grader: stringMatchGrader("sort.ts", "a - b"),
+  },
+];
+
+const tiers: CurriculumTier[] = [
+  { name: "Easy", difficulty: "easy", tasks: easyTasks, promotionThreshold: 0.8 },
+  { name: "Medium", difficulty: "medium", tasks: mediumTasks, promotionThreshold: 0.8 },
+  { name: "Hard", difficulty: "hard", tasks: hardTasks, promotionThreshold: 0.8 },
+];
 ```
 
 **Python:**
@@ -295,30 +525,50 @@ Create `module-11-rl-agents/rlvr.ts`:
 Create `module-11-rl-agents/rl-training.ts`:
 
 ```typescript
-// Define 3 curriculum tiers: Easy, Medium, Hard
-// Each with EvalTask[] and promotionThreshold: 0.8
+import { AgentEnvironment } from "./environment.js";
+import { collectTrajectory, type Trajectory } from "./trajectories.js";
+import { Curriculum } from "./curriculum.js";
 
-// TODO: Main loop:
-//   for each episode:
-//     sample task from curriculum
-//     collect trajectory
-//     record outcome for curriculum promotion
-//     log reward breakdown
-//   Save trajectories to rl-trajectories.jsonl
+async function main() {
+  const maxEpisodes = Number(process.argv[2]) || 6;
+  const curriculum = new Curriculum(tiers);  // tiers from Step 4
+  const env = new AgentEnvironment();
+  const trajectories: Trajectory[] = [];
+
+  for (let ep = 0; ep < maxEpisodes; ep++) {
+    const task = curriculum.sampleTask();
+    console.log(`Episode ${ep + 1}/${maxEpisodes} [${curriculum.getCurrentTier().name}] Task: ${task.id}`);
+
+    // TODO: collectTrajectory, record outcome, log reward breakdown
+    // TODO: push trajectory to trajectories array
+  }
+
+  // Save trajectories as JSONL (one JSON object per line)
+  const lines = trajectories.map((t) => JSON.stringify({
+    episodeId: t.episodeId,
+    prompt: t.prompt,
+    steps: t.steps.length,
+    reward: t.reward.total,
+    success: t.success,
+  })).join("\n");
+  await fs.writeFile("rl-trajectories.jsonl", lines, "utf-8");
+}
+
+main().catch(console.error);
 ```
 
 Run it: `bun module-11-rl-agents/rl-training.ts`
 
 With custom episode count: `bun module-11-rl-agents/rl-training.ts 10`
 
-### Step 7: Add Reflexion — in-context learning
+### Step 7: Add Reflexion — episodic self-critique
 
 This is where the agent actually improves. Create `module-11-rl-agents/reflexion.ts`:
 
 ```typescript
 export interface ReflexionMemory {
-  successes: string[];   // summaries of what worked
-  failures: string[];    // summaries of what went wrong
+  successes: string[];   // LLM-generated summaries of what worked
+  failures: string[];    // LLM-generated summaries of what went wrong
   maxEntries: number;    // keep memory bounded (e.g., 5)
 }
 
@@ -326,12 +576,19 @@ export function createReflexionMemory(maxEntries = 5): ReflexionMemory {
   return { successes: [], failures: [], maxEntries };
 }
 
-// TODO: summarizeTrajectory(trajectory) → string
-//   If success: "Task: {prompt}. Solved in {N} steps by: {tool sequence}."
-//   If failure: "Task: {prompt}. Failed after {N} steps. Errors: {invalid tool calls}."
+// TODO: summarizeTrajectory(trajectory) → Promise<string>
+//   This requires an LLM call — not just string formatting.
+//   Send the trajectory to the LLM with a meta-prompt like:
+//
+//     "Analyze this agent trajectory. In 2-3 sentences, identify:
+//      - If it succeeded: what strategy worked and why.
+//      - If it failed: the root cause of failure and what to do differently."
+//
+//   A simple template ("Solved in N steps by...") won't produce
+//   actionable lessons. The LLM needs to reason about *why*.
 
-// TODO: updateMemory(memory, trajectory) → ReflexionMemory
-//   Summarize the trajectory, push to successes or failures.
+// TODO: updateMemory(memory, trajectory) → Promise<ReflexionMemory>
+//   Call summarizeTrajectory, push summary to successes or failures.
 //   If over maxEntries, drop the oldest entry.
 
 // TODO: buildReflexionPrompt(memory) → string
@@ -350,12 +607,13 @@ class ReflexionMemory:
     failures: list[str] = field(default_factory=list)
     max_entries: int = 5
 
-# TODO: summarize_trajectory(trajectory) → str
+# TODO: async summarize_trajectory(trajectory) → str
+#   Requires an LLM call with a meta-prompt to analyze what went right/wrong.
 # TODO: update_memory(memory, trajectory) → ReflexionMemory
 # TODO: build_reflexion_prompt(memory) → str
 ```
 
-Now modify your training loop (Step 6) to use Reflexion:
+Now modify your training loop (Step 6) to use Reflexion. The reflexion prompt is injected into the system prompt via `collectTrajectory`'s `systemPromptExtra` parameter:
 
 ```typescript
 // In your main loop:
@@ -363,11 +621,24 @@ const memory = createReflexionMemory();
 
 for (let ep = 0; ep < maxEpisodes; ep++) {
   const reflexionPrompt = buildReflexionPrompt(memory);
-  // Pass reflexionPrompt as additional system prompt context to collectTrajectory
-  const trajectory = await collectTrajectory(env, setup, grader, config, reflexionPrompt);
-  updateMemory(memory, trajectory);
+
+  // reflexionPrompt goes into the system prompt via the 5th parameter
+  const trajectory = await collectTrajectory(
+    env, setup, grader, rewardConfig, reflexionPrompt
+  );
+
+  await updateMemory(memory, trajectory);
   // ... rest of loop
 }
+```
+
+This is where the system prompt for episode 5 looks different from episode 1:
+```
+## Lessons from previous attempts
+### What worked:
+- Reading the file before editing avoids blind overwrites. Using read_file then edit_file succeeded in 4 steps.
+### What to avoid:
+- Writing the entire file from memory without reading it first caused content loss in episode 2.
 ```
 
 ### Step 8: Bridge to Module 10 — trajectories as training data
@@ -400,7 +671,7 @@ This connects directly to Module 10's fine-tuning pipeline. The trajectories you
 
 1. **Compute reward by hand.** An episode takes 15 steps, 13 valid and 2 invalid tool calls, and scores 1.0 from the grader. Using the default config, compute the total reward on paper. Then verify with `computeReward`. (Answer: outcome=1.0, efficiency=-0.3, toolUse=0.03, total=0.73)
 
-2. **Break the reward function.** Set `stepPenalty = -0.5` and run 3 episodes. What happens to the reward even on successful episodes? At what step count does a perfect success go negative? (Answer: step 2 — `1.0 + 2×(-0.5) + 2×0.01 = 0.02`, step 3 goes negative.)
+2. **Break the reward function.** Set `stepPenalty = -0.5` and run 3 episodes. What happens to the reward even on successful episodes? At what step count does a perfect success go negative? (Answer: at 2 steps the reward is barely positive — `1.0 + 2×(-0.5) + 2×0.01 = 0.02`. At 3 steps it goes negative: `1.0 + 3×(-0.5) + 3×0.01 = -0.47`.)
 
 3. **Watch Reflexion improve.** Implement Reflexion (Step 7) and run 15 episodes on Easy tasks. Log the Reflexion prompt each episode. Does the agent avoid mistakes it made in earlier episodes? Compare average reward for episodes 1-5 vs 11-15.
 
@@ -411,8 +682,8 @@ This connects directly to Module 10's fine-tuning pipeline. The trajectories you
 ## Checkpoint
 
 You've completed Module 11 when you can answer:
-- Walk through the reward math for a 20-step episode with score 0.5 and 3 invalid calls. (outcome=0.5, efficiency=-0.4, toolUse=17×0.01+3×(-0.05)=0.02, total=0.12)
-- How does Reflexion differ from fine-tuning? (Reflexion modifies the prompt — temporary, bounded by context. Fine-tuning modifies weights — permanent, generalizes.)
+- Walk through the reward math for a 20-step episode with score 0.5 and 3 invalid calls (17 valid, 3 invalid). (outcome=0.5, efficiency=-0.4, toolUse=17×0.01+3×(-0.05)=0.02, total=0.12)
+- How does Reflexion differ from fine-tuning? (Reflexion modifies the prompt — temporary, bounded by context window. Fine-tuning modifies weights — permanent, generalizes beyond the training context.)
 - How do trajectories from this module become training data for Module 10? (Filter by reward → SFT pairs. Group by task, pair success/failure → DPO triplets.)
 - Why compute rewards at episode end instead of per-step?
 - How does curriculum learning prevent wasted training episodes?
