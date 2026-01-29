@@ -159,11 +159,13 @@ export class AgentEnvironment {
   private state: EnvironmentState | null = null;
 
   // TODO: reset(setup: EpisodeSetup): Promise<EnvironmentState>
-  //   Create temp dir, write setup files, build tool registry, return state
+  //   Create a NEW temp dir (os.tmpdir()), write setup files, build tool registry.
+  //   This must work even after cleanup() — each reset() creates a fresh workspace.
+  //   Set step=0, done=false, maxSteps=50. Return state.
 
   // TODO: step(toolName: string, input: Record<string, unknown>): Promise<StepResult>
-  //   Increment step counter. Execute tool via registry.
-  //   If step >= maxSteps, set done = true.
+  //   Increment step counter (one step = one tool execution, not one LLM turn).
+  //   Execute tool via registry. If step >= maxSteps, set done = true.
   //   Return { result, wasValid }. Never throw — return error strings.
 
   // TODO: cleanup(): Promise<void> — rm -rf workspace, set state to null
@@ -189,8 +191,9 @@ class AgentEnvironment:
     def __init__(self):
         self.state = None
     # TODO: reset(setup) → EnvironmentState — tempfile.mkdtemp(), write files, build registry
+    #   Must work after cleanup() — each reset() creates a fresh workspace.
     # TODO: step(tool_name, inp) → StepResult — increment step, execute, check max_steps
-    # TODO: cleanup() — shutil.rmtree()
+    # TODO: cleanup() — shutil.rmtree(), set state to None
     # TODO: get_state() → dict
 ```
 
@@ -305,12 +308,12 @@ Here's how the agent loop integrates with the environment. This is the core patt
 import Anthropic from "@anthropic-ai/sdk";
 import { AgentEnvironment, type EpisodeSetup, type StepResult } from "./environment.js";
 import { computeReward, type TrajectoryStep, type RewardConfig } from "./rewards.js";
-import type { Grader, Transcript } from "../module-7-evals/types.js";
+import { CODING_AGENT_PROMPT } from "../module-5-coding-agent/prompt.js";
+import type { Grader, Transcript, TranscriptTurn } from "../module-7-evals/types.js";
 
 const client = new Anthropic();
 
-// TODO: collectTrajectory(env, setup, grader, rewardConfig?, systemPromptExtra?) → Trajectory
-//   Full signature — note the optional systemPromptExtra for Reflexion (Step 7):
+// Full signature — note the optional systemPromptExtra for Reflexion (Step 7):
 
 export async function collectTrajectory(
   env: AgentEnvironment,
@@ -321,35 +324,57 @@ export async function collectTrajectory(
 ): Promise<Trajectory> {
   const state = await env.reset(setup);
   const steps: TrajectoryStep[] = [];
-  const messages: Message[] = [{ role: "user", content: setup.prompt }];
+  const messages: Anthropic.MessageParam[] = [{ role: "user", content: setup.prompt }];
+  const transcriptTurns: TranscriptTurn[] = [{ role: "user", content: setup.prompt }];
+  const startTime = Date.now();
+  let totalTokens = 0;
 
   // The agent loop: send → check stop_reason → execute tools → loop
   for (let turn = 0; turn < state.maxSteps; turn++) {
+    const systemPrompt = CODING_AGENT_PROMPT + `\nWorkspace: ${state.workspaceDir}`
+      + (systemPromptExtra ?? "");
+
     const response = await client.messages.create({
       model: "claude-sonnet-4-20250514",
       max_tokens: 4096,
-      system: BASE_SYSTEM_PROMPT + (systemPromptExtra ?? ""),
+      system: systemPrompt,
       tools: state.registry.getDefinitions(),
       messages,
     });
 
+    totalTokens += response.usage.input_tokens + response.usage.output_tokens;
     messages.push({ role: "assistant", content: response.content });
 
     // Episode ends when agent produces a final text response (no tool calls)
-    if (response.stop_reason === "end_turn") break;
+    if (response.stop_reason === "end_turn") {
+      const text = response.content.find((b) => b.type === "text");
+      transcriptTurns.push({ role: "assistant", content: text?.text ?? "" });
+      break;
+    }
 
     // Execute each tool call and record it
-    const toolResults = [];
+    const toolCalls: TranscriptTurn["toolCalls"] = [];
+    const toolResults: Anthropic.ToolResultBlockParam[] = [];
     for (const block of response.content) {
       if (block.type === "tool_use") {
         const input = block.input as Record<string, unknown>;
         const { result, wasValid }: StepResult = await env.step(block.name, input);
         steps.push({ toolName: block.name, input, result, wasValid });
+        toolCalls.push({ name: block.name, input, result });
         toolResults.push({ type: "tool_result", tool_use_id: block.id, content: result });
       }
     }
+    transcriptTurns.push({ role: "assistant", content: "", toolCalls });
     messages.push({ role: "user", content: toolResults });
   }
+
+  // Build transcript for the grader (matches Module 7's Transcript type)
+  const transcript: Transcript = {
+    task: setup.prompt,
+    turns: transcriptTurns,
+    totalTokens,
+    durationMs: Date.now() - startTime,
+  };
 
   // Grade and compute reward
   const grade = await grader.grade(state.workspaceDir, transcript);
@@ -369,7 +394,9 @@ export async function collectTrajectory(
 
 **Python:**
 ```python
+import time
 import anthropic
+from prompt import CODING_AGENT_PROMPT  # from module-5
 
 client = anthropic.Anthropic()
 
@@ -377,36 +404,56 @@ def collect_trajectory(env, setup, grader, reward_config=None, system_prompt_ext
     state = env.reset(setup)
     steps = []
     messages = [{"role": "user", "content": setup["prompt"]}]
+    transcript_turns = [{"role": "user", "content": setup["prompt"]}]
+    start_time = time.time()
+    total_tokens = 0
 
     for turn in range(state["max_steps"]):
+        system_prompt = (CODING_AGENT_PROMPT
+            + f"\nWorkspace: {state['workspace_dir']}"
+            + system_prompt_extra)
+
         response = client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=4096,
-            system=BASE_SYSTEM_PROMPT + system_prompt_extra,
+            system=system_prompt,
             tools=state["registry"].get_definitions(),
             messages=messages,
         )
+        total_tokens += response.usage.input_tokens + response.usage.output_tokens
         messages.append({"role": "assistant", "content": response.content})
 
         if response.stop_reason == "end_turn":
+            text = next((b.text for b in response.content if b.type == "text"), "")
+            transcript_turns.append({"role": "assistant", "content": text})
             break
 
+        tool_calls = []
         tool_results = []
         for block in response.content:
             if block.type == "tool_use":
-                result = env.step(block.name, block.input)
+                step_result = env.step(block.name, block.input)
                 steps.append({
                     "tool_name": block.name,
                     "input": block.input,
-                    "result": result.result,
-                    "was_valid": result.was_valid,
+                    "result": step_result.result,
+                    "was_valid": step_result.was_valid,
                 })
+                tool_calls.append({"name": block.name, "input": block.input, "result": step_result.result})
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
-                    "content": result.result,
+                    "content": step_result.result,
                 })
+        transcript_turns.append({"role": "assistant", "content": "", "tool_calls": tool_calls})
         messages.append({"role": "user", "content": tool_results})
+
+    transcript = {
+        "task": setup["prompt"],
+        "turns": transcript_turns,
+        "total_tokens": total_tokens,
+        "duration_ms": int((time.time() - start_time) * 1000),
+    }
 
     grade = grader.grade(state["workspace_dir"], transcript)
     reward = compute_reward(grade, steps, reward_config)
@@ -505,19 +552,32 @@ class Curriculum:
     # TODO: is_complete() — highest tier at threshold
 ```
 
-### Step 5: Build RLVR
+### Step 5: RLVR — graders as reward functions
 
-Create `module-11-rl-agents/rlvr.ts`:
+This isn't a separate abstraction to build — it's the recognition that you already have everything you need. Your Module 7 graders (`stringMatchGrader`, `compositeGrader`) are passed directly to `collectTrajectory` as the `grader` parameter. The grader produces a `GradeResult` with a score, and `computeReward` turns that score into a shaped reward.
+
+That's RLVR: **rule-based, deterministic reward signals derived from verifiable graders**. No model judge, no learned reward model — just code that checks concrete outcomes.
+
+If you want to combine multiple graders with different weights, use Module 7's `compositeGrader`:
 
 ```typescript
-// TODO: graderAsReward(grader, config?) — convert Module 7 grader to RL reward function
-// TODO: compositeRLVR(graders[]) — combine multiple graders with weights
+// Combining graders for multi-objective rewards
+const grader = compositeGrader([
+  { grader: fileExistsGrader("output.txt"), weight: 0.3 },
+  { grader: stringMatchGrader("output.txt", "expected"), weight: 0.7 },
+]);
+
+// Pass directly to collectTrajectory — no wrapper needed
+const trajectory = await collectTrajectory(env, setup, grader, rewardConfig);
 ```
 
-**Python:**
 ```python
-# TODO: grader_as_reward(grader, config=None) — wrap grader.grade() with compute_reward()
-# TODO: composite_rlvr(graders) — combine multiple graders with weights
+# Python equivalent
+grader = composite_grader([
+    {"grader": file_exists_grader("output.txt"), "weight": 0.3},
+    {"grader": string_match_grader("output.txt", "expected"), "weight": 0.7},
+])
+trajectory = collect_trajectory(env, setup, grader, reward_config)
 ```
 
 ### Step 6: Build the training loop
