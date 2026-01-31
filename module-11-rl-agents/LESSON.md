@@ -50,7 +50,7 @@ total    = 0.0 - 1.0 + 0.2 = -0.800
 ```
 Negative reward. The agent wasted steps and still failed.
 
-Notice: the outcome component alone separates success from failure. Efficiency and tool quality only matter at the margins.
+Notice: the outcome component alone separates success from failure. Efficiency and tool quality only matter at the margins. These weights are tunable — if `stepPenalty` is too aggressive (e.g., -0.5), even successful episodes yield negative rewards. Exercise 2 explores this.
 
 ### Reflexion — episodic self-critique
 Traditional RL updates model weights. That requires infrastructure (TRL, OpenRLHF) and GPU time. But there's a simpler form of improvement that works today: **Reflexion**.
@@ -158,19 +158,30 @@ export interface EpisodeSetup {
 export class AgentEnvironment {
   private state: EnvironmentState | null = null;
 
-  // TODO: reset(setup: EpisodeSetup): Promise<EnvironmentState>
-  //   Create a NEW temp dir (os.tmpdir()), write setup files, build tool registry.
-  //   This must work even after cleanup() — each reset() creates a fresh workspace.
-  //   Set step=0, done=false, maxSteps=50. Return state.
+  // TODO: async reset(setup: EpisodeSetup): Promise<EnvironmentState>
+  //   1. const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "rl-ep-"));
+  //   2. Write setup.files: for (const [name, content] of Object.entries(setup.files))
+  //        await fs.writeFile(path.join(workspaceDir, name), content);
+  //   3. const sandbox = new Sandbox(workspaceDir);
+  //   4. const registry = new ToolRegistry();
+  //      registry.register(...createFileTools(sandbox));
+  //      registry.register(createEditFileTool(sandbox));
+  //   5. this.state = { workspaceDir, sandbox, registry, step: 0, maxSteps: 50, done: false };
+  //   Must work after cleanup() — each reset() creates a fresh workspace.
 
-  // TODO: step(toolName: string, input: Record<string, unknown>): Promise<StepResult>
-  //   Increment step counter (one step = one tool execution, not one LLM turn).
-  //   Execute tool via registry. If step >= maxSteps, set done = true.
-  //   Return { result, wasValid }. Never throw — return error strings.
+  // TODO: async step(toolName: string, input: Record<string, unknown>): Promise<StepResult>
+  //   this.state.step++;
+  //   try { const result = await this.state.registry.execute(toolName, input);
+  //         return { result, wasValid: true };
+  //   } catch (e) { return { result: `Error: ${e.message}`, wasValid: false }; }
+  //   finally { if (this.state.step >= this.state.maxSteps) this.state.done = true; }
+  //   One step = one tool execution, not one LLM turn.
 
-  // TODO: cleanup(): Promise<void> — rm -rf workspace, set state to null
+  // TODO: async cleanup(): Promise<void>
+  //   await fs.rm(this.state.workspaceDir, { recursive: true, force: true });
+  //   this.state = null;
 
-  // TODO: getState(): EnvironmentState — return current state (throw if not reset)
+  // TODO: getState(): EnvironmentState — return this.state (throw if null)
 }
 ```
 
@@ -345,14 +356,16 @@ export async function collectTrajectory(
     totalTokens += response.usage.input_tokens + response.usage.output_tokens;
     messages.push({ role: "assistant", content: response.content });
 
-    // Episode ends when agent produces a final text response (no tool calls)
-    if (response.stop_reason === "end_turn") {
+    // Episode ends when the response contains no tool calls.
+    // Don't rely on stop_reason alone — check content blocks directly.
+    const hasToolUse = response.content.some((b) => b.type === "tool_use");
+    if (!hasToolUse) {
       const text = response.content.find((b) => b.type === "text");
       transcriptTurns.push({ role: "assistant", content: text?.text ?? "" });
       break;
     }
 
-    // Execute each tool call and record it
+    // Execute each tool call and record it (one step = one tool execution)
     const toolCalls: TranscriptTurn["toolCalls"] = [];
     const toolResults: Anthropic.ToolResultBlockParam[] = [];
     for (const block of response.content) {
@@ -423,7 +436,9 @@ def collect_trajectory(env, setup, grader, reward_config=None, system_prompt_ext
         total_tokens += response.usage.input_tokens + response.usage.output_tokens
         messages.append({"role": "assistant", "content": response.content})
 
-        if response.stop_reason == "end_turn":
+        # Episode ends when the response contains no tool calls
+        has_tool_use = any(b.type == "tool_use" for b in response.content)
+        if not has_tool_use:
             text = next((b.text for b in response.content if b.type == "text"), "")
             transcript_turns.append({"role": "assistant", "content": text})
             break
@@ -484,10 +499,18 @@ export interface CurriculumTier {
 }
 
 export class Curriculum {
-  // TODO: recordOutcome(success) — update EMA pass rate, check promotion threshold (0.8)
+  // TODO: recordOutcome(success: boolean)
+  //   Update EMA pass rate: this.passRate = 0.2 * (success ? 1 : 0) + 0.8 * this.passRate
+  //   If passRate >= tier.promotionThreshold, advance to next tier.
+  //   Return { promoted: boolean, newTier?: string }
+
   // TODO: sampleTask() — random task from current tier
+
   // TODO: getCurrentTier() — return current CurriculumTier
+
   // TODO: isComplete() — highest tier at promotion threshold
+
+  // TODO: getState() — return { episodesCompleted, totalSuccesses, tierPassRates[] }
 }
 ```
 
@@ -546,8 +569,13 @@ const tiers: CurriculumTier[] = [
 ```python
 class Curriculum:
     def __init__(self, tiers):
-        # TODO: Initialize state with current_tier, tier_pass_rates, etc.
-    # TODO: record_outcome(success) — update EMA, check promotion (threshold 0.8)
+        # TODO: Initialize current_tier=0, pass_rate=0.0, episodes=0, successes=0
+
+    def record_outcome(self, success: bool):
+        # self.pass_rate = 0.2 * (1 if success else 0) + 0.8 * self.pass_rate
+        # if self.pass_rate >= tier.promotion_threshold: advance tier
+        pass
+
     # TODO: sample_task() — random.choice from current tier
     # TODO: is_complete() — highest tier at threshold
 ```
@@ -636,16 +664,28 @@ export function createReflexionMemory(maxEntries = 5): ReflexionMemory {
   return { successes: [], failures: [], maxEntries };
 }
 
+// The meta-prompt for trajectory analysis. This is the core of Reflexion —
+// a simple template won't produce actionable lessons; the LLM must reason about *why*.
+export const REFLEXION_META_PROMPT = `You are an expert AI agent supervisor.
+Analyze this agent trajectory and produce a concise lesson (2-3 sentences).
+
+If the agent SUCCEEDED:
+- Identify the strategy that worked (e.g., which tool sequence, what order).
+- Note what made it efficient or inefficient.
+
+If the agent FAILED:
+- Identify the root cause (e.g., wrong tool, missing step, bad input).
+- State what the agent should do differently next time.
+
+Trajectory:
+{trajectory_json}
+
+Respond with only the lesson, no preamble.`;
+
 // TODO: summarizeTrajectory(trajectory) → Promise<string>
-//   This requires an LLM call — not just string formatting.
-//   Send the trajectory to the LLM with a meta-prompt like:
-//
-//     "Analyze this agent trajectory. In 2-3 sentences, identify:
-//      - If it succeeded: what strategy worked and why.
-//      - If it failed: the root cause of failure and what to do differently."
-//
-//   A simple template ("Solved in N steps by...") won't produce
-//   actionable lessons. The LLM needs to reason about *why*.
+//   Call the LLM with REFLEXION_META_PROMPT, replacing {trajectory_json}
+//   with a JSON summary of the trajectory (prompt, steps, success, reward).
+//   Return the LLM's response as a string.
 
 // TODO: updateMemory(memory, trajectory) → Promise<ReflexionMemory>
 //   Call summarizeTrajectory, push summary to successes or failures.
@@ -661,6 +701,22 @@ export function createReflexionMemory(maxEntries = 5): ReflexionMemory {
 ```python
 from dataclasses import dataclass, field
 
+REFLEXION_META_PROMPT = """You are an expert AI agent supervisor.
+Analyze this agent trajectory and produce a concise lesson (2-3 sentences).
+
+If the agent SUCCEEDED:
+- Identify the strategy that worked (e.g., which tool sequence, what order).
+- Note what made it efficient or inefficient.
+
+If the agent FAILED:
+- Identify the root cause (e.g., wrong tool, missing step, bad input).
+- State what the agent should do differently next time.
+
+Trajectory:
+{trajectory_json}
+
+Respond with only the lesson, no preamble."""
+
 @dataclass
 class ReflexionMemory:
     successes: list[str] = field(default_factory=list)
@@ -668,7 +724,7 @@ class ReflexionMemory:
     max_entries: int = 5
 
 # TODO: async summarize_trajectory(trajectory) → str
-#   Requires an LLM call with a meta-prompt to analyze what went right/wrong.
+#   Call the LLM with REFLEXION_META_PROMPT, replacing {trajectory_json}.
 # TODO: update_memory(memory, trajectory) → ReflexionMemory
 # TODO: build_reflexion_prompt(memory) → str
 ```
